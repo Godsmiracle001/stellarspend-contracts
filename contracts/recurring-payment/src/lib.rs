@@ -5,14 +5,25 @@ mod test;
 mod types;
 
 use crate::types::{DataKey, RecurringPayment};
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env};
 
 #[contract]
 pub struct RecurringPaymentContract;
 
 #[contractimpl]
 impl RecurringPaymentContract {
-    /// Creates a new recurring payment.
+    /// Creates a new recurring payment schedule.
+    ///
+    /// # Arguments
+    /// * `sender`     - The address funding the payments (must authorize)
+    /// * `recipient`  - The address that receives each payment
+    /// * `token`      - The token contract address
+    /// * `amount`     - Amount transferred on each execution (must be > 0)
+    /// * `interval`   - Seconds between executions (must be > 0)
+    /// * `start_time` - Ledger timestamp of the first allowed execution
+    ///
+    /// # Returns
+    /// The unique payment ID assigned to this schedule.
     pub fn create_payment(
         env: Env,
         sender: Address,
@@ -53,7 +64,6 @@ impl RecurringPaymentContract {
             .set(&DataKey::Payment(count), &payment);
         env.storage().instance().set(&DataKey::PaymentCount, &count);
 
-        // Emit creation event
         env.events().publish(
             (symbol_short!("recur"), symbol_short!("created"), count),
             sender,
@@ -62,7 +72,9 @@ impl RecurringPaymentContract {
         count
     }
 
-    /// Executes a recurring payment if the next execution time has passed.
+ 
+    /// # Arguments
+    /// * `payment_id` - The ID returned by `create_payment`
     pub fn execute_payment(env: Env, payment_id: u64) {
         let mut payment: RecurringPayment = env
             .storage()
@@ -79,7 +91,7 @@ impl RecurringPaymentContract {
             panic!("Too early for next execution");
         }
 
-        // Transfer tokens
+        // Transfer tokens from sender to recipient.
         let token_client = token::Client::new(&env, &payment.token);
         token_client.transfer(&payment.sender, &payment.recipient, &payment.amount);
 
@@ -100,7 +112,6 @@ impl RecurringPaymentContract {
             .instance()
             .set(&DataKey::Payment(payment_id), &payment);
 
-        // Emit execution event
         env.events().publish(
             (
                 symbol_short!("recur"),
@@ -111,7 +122,10 @@ impl RecurringPaymentContract {
         );
     }
 
-    /// Cancels a recurring payment.
+    /// Cancels a recurring payment. Only the original sender may cancel.
+    ///
+    /// # Arguments
+    /// * `payment_id` - The ID returned by `create_payment`
     pub fn cancel_payment(env: Env, payment_id: u64) {
         let mut payment: RecurringPayment = env
             .storage()
@@ -121,12 +135,15 @@ impl RecurringPaymentContract {
 
         payment.sender.require_auth();
 
+        if !payment.active {
+            panic!("Payment is already canceled");
+        }
+
         payment.active = false;
         env.storage()
             .instance()
             .set(&DataKey::Payment(payment_id), &payment);
 
-        // Emit cancellation event
         env.events().publish(
             (
                 symbol_short!("recur"),
@@ -137,7 +154,10 @@ impl RecurringPaymentContract {
         );
     }
 
-    /// Gets payment details.
+    /// Returns the full details of a payment schedule.
+    ///
+    /// # Arguments
+    /// * `payment_id` - The ID returned by `create_payment`
     pub fn get_payment(env: Env, payment_id: u64) -> RecurringPayment {
         env.storage()
             .instance()

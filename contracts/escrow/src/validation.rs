@@ -75,16 +75,21 @@ pub fn validate_reversal(
         EscrowStatus::Active => {}
     }
 
-    // Check authorization: admin or depositor can reverse
+    // Check authorization: admin, depositor or arbiter can reverse
     let is_admin = caller == admin;
     let is_depositor = caller == &escrow.depositor;
+    let is_arbiter = if let Some(arb) = &escrow.arbiter {
+        caller == arb
+    } else {
+        false
+    };
 
-    if !is_admin && !is_depositor {
+    if !is_admin && !is_depositor && !is_arbiter {
         return Err(ValidationError::Unauthorized);
     }
 
-    // If not admin and deadline check is enabled, verify deadline has passed
-    if check_deadline && !is_admin && current_ledger < escrow.deadline {
+    // If not admin and not arbiter and deadline check is enabled, verify deadline has passed
+    if check_deadline && !is_admin && !is_arbiter && current_ledger < escrow.deadline {
         return Err(ValidationError::DeadlineNotReached);
     }
 
@@ -109,7 +114,13 @@ pub fn validate_release(
 
     let is_admin = caller == admin;
     let is_depositor = caller == &escrow.depositor;
-    if !is_admin && !is_depositor {
+    let is_arbiter = if let Some(arb) = &escrow.arbiter {
+        caller == arb
+    } else {
+        false
+    };
+
+    if !is_admin && !is_depositor && !is_arbiter {
         return Err(ValidationError::Unauthorized);
     }
 
@@ -126,6 +137,7 @@ mod tests {
             escrow_id: 1,
             depositor: Address::generate(env),
             recipient: Address::generate(env),
+            arbiter: None,
             token: Address::generate(env),
             amount: 1000,
             status,

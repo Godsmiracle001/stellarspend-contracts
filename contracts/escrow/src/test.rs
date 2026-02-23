@@ -66,7 +66,7 @@ fn create_test_escrow(
     token_admin.mint(depositor, &amount);
 
     // Create escrow
-    client.create_escrow(depositor, recipient, &amount, &deadline)
+    client.create_escrow(depositor, recipient, &None, &amount, &deadline)
 }
 
 // ============================================
@@ -176,7 +176,7 @@ fn test_create_escrow_invalid_amount() {
     let recipient = Address::generate(&env);
 
     // Should panic due to invalid amount
-    client.create_escrow(&depositor, &recipient, &0, &20000);
+    client.create_escrow(&depositor, &recipient, &None, &0, &20000);
 }
 
 // ============================================

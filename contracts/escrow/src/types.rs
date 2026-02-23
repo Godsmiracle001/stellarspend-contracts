@@ -24,6 +24,7 @@ pub struct Escrow {
     pub escrow_id: u64,
     pub depositor: Address,
     pub recipient: Address,
+    pub arbiter: Option<Address>,
     pub token: Address,
     pub amount: i128,
     pub status: EscrowStatus,
@@ -127,13 +128,12 @@ impl EscrowEvents {
         escrow_id: u64,
         depositor: &Address,
         recipient: &Address,
+        arbiter: &Option<Address>,
         amount: i128,
     ) {
         let topics = (symbol_short!("escrow"), symbol_short!("created"));
-        env.events().publish(
-            topics,
-            (escrow_id, depositor.clone(), recipient.clone(), amount),
-        );
+        env.events()
+            .publish(topics, (escrow_id, depositor.clone(), recipient.clone(), arbiter.clone(), amount));
     }
 
     /// Emitted when a batch reversal starts.

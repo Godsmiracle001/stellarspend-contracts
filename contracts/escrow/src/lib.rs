@@ -83,6 +83,7 @@ impl EscrowContract {
         env: Env,
         depositor: Address,
         recipient: Address,
+        arbiter: Option<Address>,
         amount: i128,
         deadline: u64,
     ) -> u64 {
@@ -121,6 +122,7 @@ impl EscrowContract {
             escrow_id,
             depositor: depositor.clone(),
             recipient: recipient.clone(),
+            arbiter: arbiter.clone(),
             token: token.clone(),
             amount,
             status: EscrowStatus::Active,
@@ -145,7 +147,7 @@ impl EscrowContract {
             .set(&DataKey::UserEscrows(depositor.clone()), &user_escrows);
 
         // Emit event
-        EscrowEvents::escrow_created(&env, escrow_id, &depositor, &recipient, amount);
+        EscrowEvents::escrow_created(&env, escrow_id, &depositor, &recipient, &arbiter, amount);
 
         escrow_id
     }
@@ -222,7 +224,7 @@ impl EscrowContract {
                 .get(&DataKey::Escrow(request.escrow_id));
 
             let validation_result =
-                validate_reversal(escrow_opt.as_ref(), &caller, &admin, false, current_ledger);
+                validate_reversal(escrow_opt.as_ref(), &caller, &admin, true, current_ledger);
 
             let (is_valid, error_code) = match validation_result {
                 Ok(()) => (true, 0u32),
@@ -509,8 +511,16 @@ impl EscrowContract {
             .get(&DataKey::Escrow(escrow_id))
             .expect("Escrow not found");
 
-        // Check authorization: admin or depositor
-        if caller != admin && caller != escrow.depositor {
+        // Check authorization: admin, depositor or arbiter
+        let is_admin = caller == admin;
+        let is_depositor = caller == &escrow.depositor;
+        let is_arbiter = if let Some(arb) = &escrow.arbiter {
+            caller == *arb
+        } else {
+            false
+        };
+
+        if !is_admin && !is_depositor && !is_arbiter {
             panic_with_error!(&env, EscrowError::Unauthorized);
         }
 
