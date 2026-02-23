@@ -10,11 +10,11 @@ mod validation;
 use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, Env, Vec};
 
 pub use crate::types::{
-    BatchReversalResult, DataKey, Escrow, EscrowEvents, EscrowStatus, ReversalRequest,
-    ReversalResult, MAX_BATCH_SIZE, ReleaseRequest, ReleaseResult, BatchReleaseResult,
+    BatchReleaseResult, BatchReversalResult, DataKey, Escrow, EscrowEvents, EscrowStatus,
+    ReleaseRequest, ReleaseResult, ReversalRequest, ReversalResult, MAX_BATCH_SIZE,
 };
-use crate::validation::validate_reversal;
 use crate::validation::validate_release;
+use crate::validation::validate_reversal;
 
 /// Error codes for the escrow contract.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -550,9 +550,7 @@ impl EscrowContract {
 
     /// Returns an escrow by ID.
     pub fn get_escrow(env: Env, escrow_id: u64) -> Option<Escrow> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id))
+        env.storage().persistent().get(&DataKey::Escrow(escrow_id))
     }
 
     /// Returns all escrow IDs for a user.

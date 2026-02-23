@@ -189,10 +189,7 @@ impl SpendingLimitsContract {
                     // Emit failure event
                     LimitEvents::limit_update_failed(&env, batch_id, &request.user, error_code);
 
-                    results.push_back(LimitUpdateResult::Failure(
-                        request.user.clone(),
-                        error_code,
-                    ));
+                    results.push_back(LimitUpdateResult::Failure(request.user.clone(), error_code));
                 }
             }
         }

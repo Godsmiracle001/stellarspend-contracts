@@ -12,7 +12,13 @@ use soroban_sdk::{
 };
 
 /// Creates a test environment with the contract deployed and initialized.
-fn setup_test_env() -> (Env, Address, Address, token::Client<'static>, SharedBudgetContractClient<'static>) {
+fn setup_test_env() -> (
+    Env,
+    Address,
+    Address,
+    token::Client<'static>,
+    SharedBudgetContractClient<'static>,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().with_mut(|li| {

@@ -96,16 +96,30 @@ impl SharedBudgetEvents {
         env.events().publish(topics, (contributor.clone(), amount));
     }
 
-    /// Event emitted when an expense is incurred from a budget.
-    pub fn expense_incurred(env: &Env, budget_id: u64, spender: &Address, recipient: &Address, amount: i128) {
-        let topics = (symbol_short!("budget"), symbol_short!("expense"), budget_id);
-        env.events().publish(topics, (spender.clone(), recipient.clone(), amount));
+    /// Event emitted when an allocation fails for a recipient.
+    pub fn allocation_failure(
+        env: &Env,
+        batch_id: u64,
+        recipient: &Address,
+        amount: i128,
+        error_code: u32,
+    ) {
+        let topics = (symbol_short!("alloc"), symbol_short!("failed"), batch_id);
+        env.events()
+            .publish(topics, (recipient.clone(), amount, error_code));
     }
 
-    /// Event emitted when a member is added to a budget.
-    pub fn member_added(env: &Env, budget_id: u64, member: &Address) {
-        let topics = (symbol_short!("budget"), symbol_short!("member"), budget_id);
-        env.events().publish(topics, (member.clone(),));
+    /// Event emitted when allocation batch processing completes.
+    pub fn batch_completed(
+        env: &Env,
+        batch_id: u64,
+        successful: u32,
+        failed: u32,
+        total_allocated: i128,
+    ) {
+        let topics = (symbol_short!("alloc"), symbol_short!("completed"), batch_id);
+        env.events()
+            .publish(topics, (successful, failed, total_allocated));
     }
 
     /// Event emitted when a spending rule is added to a budget.

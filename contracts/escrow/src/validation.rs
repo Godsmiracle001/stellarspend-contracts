@@ -99,7 +99,11 @@ pub fn validate_reversal(
 /// Validates whether an escrow can be released.
 ///
 /// Rules: escrow must exist, be active, and caller must be admin or the depositor.
-pub fn validate_release(escrow: Option<&Escrow>, caller: &Address, admin: &Address) -> Result<(), ValidationError> {
+pub fn validate_release(
+    escrow: Option<&Escrow>,
+    caller: &Address,
+    admin: &Address,
+) -> Result<(), ValidationError> {
     let escrow = escrow.ok_or(ValidationError::EscrowNotFound)?;
 
     match escrow.status {
@@ -122,7 +126,6 @@ pub fn validate_release(escrow: Option<&Escrow>, caller: &Address, admin: &Addre
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -248,10 +251,25 @@ mod tests {
 
     #[test]
     fn test_error_code_conversion() {
-        assert_eq!(ValidationError::EscrowNotFound.to_error_code(), ErrorCode::ESCROW_NOT_FOUND);
-        assert_eq!(ValidationError::AlreadyReleased.to_error_code(), ErrorCode::ALREADY_RELEASED);
-        assert_eq!(ValidationError::AlreadyReversed.to_error_code(), ErrorCode::ALREADY_REVERSED);
-        assert_eq!(ValidationError::Unauthorized.to_error_code(), ErrorCode::UNAUTHORIZED);
-        assert_eq!(ValidationError::DeadlineNotReached.to_error_code(), ErrorCode::DEADLINE_NOT_REACHED);
+        assert_eq!(
+            ValidationError::EscrowNotFound.to_error_code(),
+            ErrorCode::ESCROW_NOT_FOUND
+        );
+        assert_eq!(
+            ValidationError::AlreadyReleased.to_error_code(),
+            ErrorCode::ALREADY_RELEASED
+        );
+        assert_eq!(
+            ValidationError::AlreadyReversed.to_error_code(),
+            ErrorCode::ALREADY_REVERSED
+        );
+        assert_eq!(
+            ValidationError::Unauthorized.to_error_code(),
+            ErrorCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            ValidationError::DeadlineNotReached.to_error_code(),
+            ErrorCode::DEADLINE_NOT_REACHED
+        );
     }
 }

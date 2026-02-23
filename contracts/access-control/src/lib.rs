@@ -1,5 +1,5 @@
 //! # Access Control Contract
-//! 
+//!
 //! A robust Role-Based Access Control (RBAC) system for StellarSpend contracts.
 //! Supports multiple roles with hierarchical permissions and comprehensive event logging.
 
@@ -72,14 +72,14 @@ impl AccessControlContract {
 
         // Set the admin
         env.storage().instance().set(&DataKey::Admin, &admin);
-        
+
         // Assign admin role to the initializer
         let mut roles = Map::new(&env);
         roles.set(Role::Admin, true);
         env.storage()
             .instance()
             .set(&DataKey::UserRoles(admin.clone()), &roles);
-        
+
         // Initialize counters
         env.storage()
             .instance()
@@ -93,7 +93,7 @@ impl AccessControlContract {
     /// Assign a role to a user (admin only)
     pub fn grant_role(env: Env, caller: Address, user: Address, role: Role) {
         caller.require_auth();
-        Self::require_admin(&env, &caller);
+        Self::require_admin(&env, caller);
 
         // Get or create user's role map
         let mut roles: Map<Role, bool> = env
@@ -131,7 +131,7 @@ impl AccessControlContract {
     /// Revoke a role from a user (admin only)
     pub fn revoke_role(env: Env, caller: Address, user: Address, role: Role) {
         caller.require_auth();
-        Self::require_admin(&env, &caller);
+        Self::require_admin(&env, caller);
 
         // Prevent admin from revoking their own admin role
         if caller == user && role == Role::Admin {
@@ -195,7 +195,7 @@ impl AccessControlContract {
     /// Transfer admin role to a new address (current admin only)
     pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
         current_admin.require_auth();
-        Self::require_admin(&env, &current_admin);
+        Self::require_admin(&env, current_admin);
 
         // Revoke admin role from current admin
         let mut current_roles: Map<Role, bool> = env
@@ -252,8 +252,7 @@ impl AccessControlContract {
             .instance()
             .get(&DataKey::Admin)
             .expect("Contract not initialized");
-
-        if *caller != admin {
+        if caller != admin {
             panic_with_error!(env, AccessControlError::Unauthorized);
         }
     }

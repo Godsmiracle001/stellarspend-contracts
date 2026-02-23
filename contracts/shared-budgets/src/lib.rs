@@ -313,47 +313,34 @@ impl SharedBudgetContract {
 
         // Store updated budget
         env.storage()
-            .persistent()
-            .set(&DataKey::Budget(budget_id), &budget);
+            .instance()
+            .set(&DataKey::TotalBatches, &(total_batches + 1));
+        env.storage().instance().set(
+            &DataKey::TotalAllocationsProcessed,
+            &(total_processed + request_count as u64),
+        );
+        env.storage().instance().set(
+            &DataKey::TotalAllocatedVolume,
+            &total_allocated
+                .checked_add(total_volume)
+                .unwrap_or(total_volume),
+        );
 
-        // Mark as member
-        env.storage()
-            .persistent()
-            .set(&DataKey::BudgetMember(budget_id, new_member.clone()), &true);
+        // Emit batch completed event
+        SharedBudgetEvents::batch_completed(
+            &env,
+            batch_id,
+            successful_count,
+            failed_count,
+            total_allocated,
+        );
 
-        // Emit event
-        SharedBudgetEvents::member_added(&env, budget_id, &new_member);
-    }
-
-    /// Add a spending rule to a budget.
-    pub fn add_spending_rule(
-        env: Env,
-        caller: Address,
-        budget_id: u64,
-        rule: BudgetSpendingRule,
-    ) {
-        caller.require_auth();
-
-        // Validate rule percentage
-        validate_percentage(rule.percentage_threshold).unwrap_or_else(|_| {
-            panic_with_error!(&env, SharedBudgetError::InvalidPercentage);
-        });
-
-        // Load budget
-        let mut budget: Budget = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Budget(budget_id))
-            .unwrap_or_else(|| panic_with_error!(&env, SharedBudgetError::BudgetNotFound));
-
-        // Only creators or admins can add rules
-        if caller != budget.creator {
-            Self::require_admin(&env, &caller);
-        }
-
-        // Check rule limit
-        if budget.spending_rules.len() as u32 >= MAX_SPENDING_RULES {
-            panic_with_error!(&env, SharedBudgetError::TooManyRules);
+        AllocationBatchResult {
+            total_requests: request_count,
+            successful: successful_count,
+            failed: failed_count,
+            total_allocated,
+            results,
         }
 
         // Emit event first before modifying the budget
