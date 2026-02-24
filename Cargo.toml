@@ -25,6 +25,7 @@ members = [
     "contracts/access-control",
     "contracts/pausable",
     "contracts/audit",
+    "contracts/category-analytics",
 ]
 
 [workspace.package]
