@@ -1,3 +1,7 @@
+use soroban_sdk::Env;
+use stellarspend_contracts::fee::{FeeConfig, FeeWindow, FeeContract};
+
+
 #[test]
 fn test_default_fee() {
     let env = Env::default();
@@ -20,3 +24,25 @@ fn test_promotional_window() {
     let fee = calculate_fee(&env, 1000, &config);
     assert_eq!(fee, 5);
 }
+
+
+#[test]
+fn test_overflow_protection() {
+    let env = Env::default();
+    let config = FeeConfig { default_fee_rate: 100, windows: vec![] };
+    env.storage().persistent().set(&"fee_config", &config);
+
+    let result = FeeContract::get_fee(env.clone(), i128::MAX);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_underflow_protection() {
+    let env = Env::default();
+    let config = FeeConfig { default_fee_rate: 100, windows: vec![] };
+    env.storage().persistent().set(&"fee_config", &config);
+
+    let result = FeeContract::get_fee(env.clone(), -1000);
+    assert!(result.is_err());
+}
+

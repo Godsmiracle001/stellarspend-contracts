@@ -54,3 +54,13 @@ impl FeeContract {
         calculate_fee(&env, amount, &config)
     }
 }
+
+use soroban_sdk::Env;
+
+pub fn safe_multiply(amount: i128, rate: u32) -> Option<i128> {
+    amount.checked_mul(rate as i128)
+}
+
+pub fn safe_divide(value: i128, divisor: i128) -> Option<i128> {
+    value.checked_div(divisor)
+}
