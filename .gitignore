@@ -30,3 +30,4 @@ Thumbs.db
 *.profraw
 lcov.info
 coverage/
+**/test_snapshots/

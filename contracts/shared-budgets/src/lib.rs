@@ -1,0 +1,445 @@
+#![no_std]
+
+mod types;
+mod validation;
+
+use soroban_sdk::{
+    contract, contractimpl, contracttype, panic_with_error, token, Address, Env, Symbol, Vec,
+};
+
+pub use crate::types::{
+    Budget, BudgetContribution, BudgetSpendingRule, DataKey, SharedBudgetEvents,
+    MAX_BUDGET_MEMBERS, MAX_SPENDING_RULES,
+};
+use crate::validation::{validate_amount, validate_percentage};
+
+/// Error codes for the shared budget contract.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SharedBudgetError {
+    /// Contract not initialized
+    NotInitialized = 1,
+    /// Caller is not authorized
+    Unauthorized = 2,
+    /// Budget does not exist
+    BudgetNotFound = 3,
+    /// Member already exists in budget
+    MemberAlreadyExists = 4,
+    /// Member not found in budget
+    MemberNotFound = 5,
+    /// Spending rule not found
+    RuleNotFound = 6,
+    /// Invalid amount
+    InvalidAmount = 7,
+    /// Insufficient balance
+    InsufficientBalance = 8,
+    /// Invalid percentage value
+    InvalidPercentage = 9,
+    /// Budget is already active
+    BudgetAlreadyActive = 10,
+    /// Budget is not active
+    BudgetNotActive = 11,
+    /// Too many members in budget
+    TooManyMembers = 12,
+    /// Too many spending rules
+    TooManyRules = 13,
+}
+
+impl From<SharedBudgetError> for soroban_sdk::Error {
+    fn from(e: SharedBudgetError) -> Self {
+        soroban_sdk::Error::from_contract_error(e as u32)
+    }
+}
+
+#[contract]
+pub struct SharedBudgetContract;
+
+#[contractimpl]
+impl SharedBudgetContract {
+    /// Initializes the contract with an admin address.
+    pub fn initialize(env: Env, admin: Address) {
+        if env.storage().instance().has(&DataKey::Admin) {
+            panic!("Contract already initialized");
+        }
+
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalBudgetsCreated, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalContributionsProcessed, &0u64);
+    }
+
+    /// Creates a new shared budget with specified members and spending rules.
+    pub fn create_budget(
+        env: Env,
+        creator: Address,
+        budget_name: Symbol,
+        members: Vec<Address>,
+        token: Address,
+        spending_rules: Vec<BudgetSpendingRule>,
+    ) -> u64 {
+        creator.require_auth();
+
+        // Validate member count
+        if members.len() as u32 > MAX_BUDGET_MEMBERS {
+            panic_with_error!(&env, SharedBudgetError::TooManyMembers);
+        }
+
+        // Validate spending rules count
+        if spending_rules.len() as u32 > MAX_SPENDING_RULES {
+            panic_with_error!(&env, SharedBudgetError::TooManyRules);
+        }
+
+        // Validate spending rules
+        for rule in spending_rules.iter() {
+            validate_percentage(rule.percentage_threshold).unwrap_or_else(|_| {
+                panic_with_error!(&env, SharedBudgetError::InvalidPercentage);
+            });
+        }
+
+        // Get next budget ID and increment counter
+        let budget_id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalBudgetsCreated)
+            .unwrap_or(0)
+            + 1;
+
+        // Create budget structure
+        let budget = Budget {
+            id: budget_id,
+            name: budget_name,
+            creator: creator.clone(),
+            token: token.clone(),
+            members: members.clone(),
+            balance: 0,
+            total_contributed: 0,
+            spending_rules: spending_rules.clone(),
+            is_active: true,
+            created_at: env.ledger().timestamp(),
+        };
+
+        // Store the budget
+        env.storage()
+            .persistent()
+            .set(&DataKey::Budget(budget_id), &budget);
+
+        // Update counter
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalBudgetsCreated, &budget_id);
+
+        // Add members to budget
+        for member in members.iter() {
+            env.storage()
+                .persistent()
+                .set(&DataKey::BudgetMember(budget_id, member.clone()), &true);
+        }
+
+        // Emit event
+        SharedBudgetEvents::budget_created(&env, budget_id, &creator, &members, &token);
+
+        budget_id
+    }
+
+    /// Contributes to a shared budget.
+    pub fn contribute_to_budget(env: Env, contributor: Address, budget_id: u64, amount: i128) {
+        contributor.require_auth();
+
+        // Validate amount
+        validate_amount(amount).unwrap_or_else(|_| {
+            panic_with_error!(&env, SharedBudgetError::InvalidAmount);
+        });
+
+        // Load budget
+        let mut budget: Budget = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Budget(budget_id))
+            .unwrap_or_else(|| panic_with_error!(&env, SharedBudgetError::BudgetNotFound));
+
+        if !budget.is_active {
+            panic_with_error!(&env, SharedBudgetError::BudgetNotActive);
+        }
+
+        // Transfer tokens from contributor to contract
+        let token_client = token::Client::new(&env, &budget.token);
+        token_client.transfer(&contributor, &env.current_contract_address(), &amount);
+
+        // Update budget balance and contribution tracking
+        budget.balance += amount;
+        budget.total_contributed += amount;
+
+        // Store updated budget
+        env.storage()
+            .persistent()
+            .set(&DataKey::Budget(budget_id), &budget);
+
+        // Track contribution
+        let contribution = BudgetContribution {
+            budget_id,
+            contributor: contributor.clone(),
+            amount,
+            timestamp: env.ledger().timestamp(),
+        };
+
+        // Get next contribution ID
+        let contribution_id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalContributionsProcessed)
+            .unwrap_or(0)
+            + 1;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contribution(contribution_id), &contribution);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalContributionsProcessed, &contribution_id);
+
+        // Emit event
+        SharedBudgetEvents::contribution_added(&env, budget_id, &contributor, amount);
+    }
+
+    /// Spend from a shared budget with spending rule enforcement.
+    pub fn spend_from_budget(
+        env: Env,
+        spender: Address,
+        budget_id: u64,
+        recipient: Address,
+        amount: i128,
+    ) {
+        spender.require_auth();
+
+        // Validate amount
+        validate_amount(amount).unwrap_or_else(|_| {
+            panic_with_error!(&env, SharedBudgetError::InvalidAmount);
+        });
+
+        // Load budget
+        let mut budget: Budget = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Budget(budget_id))
+            .unwrap_or_else(|| panic_with_error!(&env, SharedBudgetError::BudgetNotFound));
+
+        if !budget.is_active {
+            panic_with_error!(&env, SharedBudgetError::BudgetNotActive);
+        }
+
+        // Check if spender is a member of the budget
+        let is_member = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BudgetMember(budget_id, spender.clone()))
+            .unwrap_or(false);
+
+        if !is_member {
+            panic_with_error!(&env, SharedBudgetError::MemberNotFound);
+        }
+
+        // Check if budget has sufficient balance
+        if budget.balance < amount {
+            panic_with_error!(&env, SharedBudgetError::InsufficientBalance);
+        }
+
+        // Enforce spending rules
+        Self::enforce_spending_rules(&env, &budget, &spender, amount);
+
+        // Transfer tokens from contract to recipient
+        let token_client = token::Client::new(&env, &budget.token);
+        token_client.transfer(&env.current_contract_address(), &recipient, &amount);
+
+        // Update budget balance
+        budget.balance -= amount;
+
+        // Store updated budget
+        env.storage()
+            .persistent()
+            .set(&DataKey::Budget(budget_id), &budget);
+
+        // Emit event
+        SharedBudgetEvents::expense_incurred(&env, budget_id, &spender, &recipient, amount);
+    }
+
+    /// Add a member to an existing budget.
+    pub fn add_member_to_budget(env: Env, caller: Address, budget_id: u64, new_member: Address) {
+        caller.require_auth();
+
+        // Load budget
+        let mut budget: Budget = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Budget(budget_id))
+            .unwrap_or_else(|| panic_with_error!(&env, SharedBudgetError::BudgetNotFound));
+
+        // Only creators or admins can add members
+        if caller != budget.creator {
+            Self::require_admin(&env, &caller);
+        }
+
+        // Check if member already exists
+        let member_exists = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BudgetMember(budget_id, new_member.clone()))
+            .unwrap_or(false);
+
+        if member_exists {
+            panic_with_error!(&env, SharedBudgetError::MemberAlreadyExists);
+        }
+
+        // Check member limit
+        let mut member_count = 0u32;
+        for member in budget.members.iter() {
+            member_count += 1;
+        }
+
+        if member_count >= MAX_BUDGET_MEMBERS {
+            panic_with_error!(&env, SharedBudgetError::TooManyMembers);
+        }
+
+        // Add member to budget
+        budget.members.push_back(new_member.clone());
+
+        // Store updated budget
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalBatches, &(total_batches + 1));
+        env.storage().instance().set(
+            &DataKey::TotalAllocationsProcessed,
+            &(total_processed + request_count as u64),
+        );
+        env.storage().instance().set(
+            &DataKey::TotalAllocatedVolume,
+            &total_allocated
+                .checked_add(total_volume)
+                .unwrap_or(total_volume),
+        );
+
+        // Emit batch completed event
+        SharedBudgetEvents::batch_completed(
+            &env,
+            batch_id,
+            successful_count,
+            failed_count,
+            total_allocated,
+        );
+
+        AllocationBatchResult {
+            total_requests: request_count,
+            successful: successful_count,
+            failed: failed_count,
+            total_allocated,
+            results,
+        }
+
+        // Emit event first before modifying the budget
+        SharedBudgetEvents::spending_rule_added(&env, budget_id, &rule);
+
+        // Add rule to budget
+        budget.spending_rules.push_back(rule);
+
+        // Store updated budget
+        env.storage()
+            .persistent()
+            .set(&DataKey::Budget(budget_id), &budget);
+    }
+
+    /// Get budget details.
+    pub fn get_budget(env: Env, budget_id: u64) -> Budget {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Budget(budget_id))
+            .unwrap_or_else(|| panic_with_error!(&env, SharedBudgetError::BudgetNotFound))
+    }
+
+    /// Get member status for a budget.
+    pub fn is_budget_member(env: Env, budget_id: u64, member: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::BudgetMember(budget_id, member))
+            .unwrap_or(false)
+    }
+
+    /// Get contribution details.
+    pub fn get_contribution(env: Env, contribution_id: u64) -> BudgetContribution {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Contribution(contribution_id))
+            .unwrap_or_else(|| panic_with_error!(&env, SharedBudgetError::RuleNotFound))
+        // Using RuleNotFound as a generic error
+    }
+
+    /// Returns the admin address.
+    pub fn get_admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Contract not initialized")
+    }
+
+    /// Updates the admin address.
+    pub fn set_admin(env: Env, current_admin: Address, new_admin: Address) {
+        current_admin.require_auth();
+        Self::require_admin(&env, &current_admin);
+
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+    }
+
+    /// Returns the total number of budgets created.
+    pub fn get_total_budgets_created(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalBudgetsCreated)
+            .unwrap_or(0)
+    }
+
+    /// Returns the total number of contributions processed.
+    pub fn get_total_contribs_processed(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalContributionsProcessed)
+            .unwrap_or(0)
+    }
+
+    // Internal helper to enforce spending rules
+    fn enforce_spending_rules(env: &Env, budget: &Budget, spender: &Address, amount: i128) {
+        // Check each spending rule to see if it applies
+        for rule in budget.spending_rules.iter() {
+            // If this rule applies to the spender and the amount exceeds threshold
+            if rule.applicable_to == *spender {
+                // Check if rule applies to this specific spender
+                let threshold_amount = if budget.total_contributed > 0 {
+                    (budget.total_contributed as f64 * (rule.percentage_threshold as f64 / 100.0))
+                        as i128
+                } else {
+                    0 // If no contributions yet, threshold is 0
+                };
+
+                if amount > threshold_amount && !rule.requires_approval {
+                    panic_with_error!(env, SharedBudgetError::Unauthorized);
+                }
+            }
+        }
+    }
+
+    // Internal helper to verify admin
+    fn require_admin(env: &Env, caller: &Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Contract not initialized");
+
+        if *caller != admin {
+            panic_with_error!(env, SharedBudgetError::Unauthorized);
+        }
+    }
+}
+
+#[cfg(test)]
+mod test;

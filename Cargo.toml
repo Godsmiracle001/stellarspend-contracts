@@ -2,10 +2,46 @@
 resolver = "2"
 members = [
     "contracts/transaction-analytics",
+    "contracts/contract-upgrade/old_contract",
+    "contracts/contract-upgrade/new_contract",
     "contracts/batch-transfer",
+    "contracts/batch-conversion",
+    "contracts/batch-rewards",
+    "contracts/batch-payment",
+    "contracts/batch-payment-reminders",
+    "contracts/batch-wallet-creation",
     "contracts/budget-recommendations",
     "contracts/fee",
+    "contracts/shared-budgets",
+    "contracts/multi-currency-wallet",
+    "contracts/spending-limits",
+    "contracts/savings-goals",
+    "contracts/batch-history",
+    "contracts/batch-notifications",
+    "contracts/escrow",
+    "contracts/budget-allocation",
+    "contracts/recurring-payment",
+    "contracts/batch-token-mint",
+    "contracts/asset_control",
+    "contracts/access-control",
 ]
+
+[package]
+name = "stellarspend-contracts-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[[test]]
+name = "snapshot_tests"
+path = "tests/snapshot_tests.rs"
+
+[[test]]
+name = "memo_tests"
+path = "tests/memo_tests.rs"
 
 [workspace.package]
 version = "0.1.0"
