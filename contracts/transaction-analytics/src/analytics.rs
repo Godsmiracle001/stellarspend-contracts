@@ -9,10 +9,26 @@ use crate::types::{
 /// Calculates the processing fee for a transaction amount.
 ///
 /// Current fee model: 0.1% (10 basis points)
-pub fn calculate_fee(amount: i128) -> i128 {
+pub fn calculate_fee(env: &Env, amount: i128, operation: &Symbol) -> i128 {
     if amount <= 0 {
         return 0;
     }
+
+    // Try operation-specific config first
+    if let Some(op_config) = crate::fees::get_operation_fee_config(env, operation) {
+        if op_config.enabled {
+            return crate::fees::calculate_transaction_fee(env, amount, &op_config).fee_amount;
+        }
+    }
+
+    // Fall back to global config
+    if let Some(global) = crate::fees::get_current_fee_config(env) {
+        if global.enabled {
+            return crate::fees::calculate_transaction_fee(env, amount, &global).fee_amount;
+        }
+    }
+
+    // Default calculation
     // 0.1% = amount * 10 / 10000 = amount / 1000
     amount / 1000
 }
@@ -56,8 +72,8 @@ pub fn compute_batch_metrics(
         // Accumulate volume
         total_volume = total_volume.checked_add(tx.amount).unwrap_or(i128::MAX);
 
-        // Calculate and accumulate fees
-        let fee = calculate_fee(tx.amount);
+        // Calculate and accumulate fees (operation-specific)
+        let fee = calculate_fee(&env, tx.amount, &tx.category);
         total_fees = total_fees.checked_add(fee).unwrap_or(i128::MAX);
 
         // Track min/max
@@ -107,7 +123,7 @@ pub fn compute_category_metrics(
     // Single pass to aggregate by category
     for tx in transactions.iter() {
         let current = category_map.get(tx.category.clone()).unwrap_or((0, 0, 0));
-        let fee = calculate_fee(tx.amount);
+        let fee = calculate_fee(&env, tx.amount, &category);
         category_map.set(
             tx.category.clone(),
             (

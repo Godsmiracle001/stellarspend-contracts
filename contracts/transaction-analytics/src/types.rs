@@ -1,6 +1,24 @@
+// =====================
+// FEE SYSTEM EXTENSIONS
+// =====================
+// The following types and events support advanced fee logic:
+// - FeeRecipientShare: for splitting fees
+// - DataKey::FeePaused: for pausing fees
+// - AnalyticsEvents::fee_cap_changed, fee_distributed, fee_pause_toggled, operation_fee_updated
+//
+// See each struct/event for details.
 //! Data types and events for batch transaction analytics.
 
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
+
+/// Structure for fee distribution recipient and share
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct FeeRecipientShare {
+    pub recipient: Address,
+    /// Share in basis points (10000 = 100%)
+    pub share_bps: u32,
+}
 
 /// Maximum number of transactions in a single batch for optimization.
 pub const MAX_BATCH_SIZE: u32 = 100;
@@ -227,6 +245,10 @@ pub enum DataKey {
     LastAnalyticsUpdate,
     /// Current fee configuration
     CurrentFeeConfig,
+    /// Per-operation fee configuration keyed by operation symbol
+    OperationFeeConfig(Symbol),
+    /// Fee pause flag
+    FeePaused,
 }
 
 /// Status indicating refund eligibility for a transaction.
@@ -499,6 +521,18 @@ impl AnalyticsEvents {
         env.events().publish(topics, tx_id);
     }
 
+    /// Event emitted when an operation-specific fee is updated.
+    pub fn operation_fee_updated(env: &Env, admin: &Address, operation: &Symbol, previous: Option<FeeConfig>, new: FeeConfig) {
+        let topics = (symbol_short!("fee"), symbol_short!("operation_updated"));
+        env.events().publish(topics, (admin.clone(), operation.clone(), previous, new));
+    }
+
+    /// Event emitted when the fee cap (max_fee) is changed.
+    pub fn fee_cap_changed(env: &Env, admin: &Address, previous: Option<u64>, new: Option<u64>) {
+        let topics = (symbol_short!("fee"), symbol_short!("cap_changed"));
+        env.events().publish(topics, (admin.clone(), previous, new));
+    }
+
     /// Event emitted when a transaction bundle is created.
     pub fn bundle_created(env: &Env, bundle_id: u64, result: &BundleResult) {
         let topics = (symbol_short!("bundle"), symbol_short!("created"), bundle_id);
@@ -579,5 +613,17 @@ impl AnalyticsEvents {
     ) {
         let topics = (symbol_short!("fee"), symbol_short!("deducted"));
         env.events().publish(topics, (gross_amount, fee_amount, net_amount, fee_percentage_bps));
+    }
+
+    /// Event emitted for each fee distribution to a recipient.
+    pub fn fee_distributed(env: &Env, recipient: &Address, amount: i128, share_bps: u32) {
+        let topics = (symbol_short!("fee"), symbol_short!("distributed"), recipient);
+        env.events().publish(topics, (amount, share_bps));
+    }
+
+    /// Event emitted when fees are paused or resumed.
+    pub fn fee_pause_toggled(env: &Env, admin: &Address, paused: bool) {
+        let topics = (symbol_short!("fee"), if paused { symbol_short!("paused") } else { symbol_short!("resumed") });
+        env.events().publish(topics, admin.clone());
     }
 }

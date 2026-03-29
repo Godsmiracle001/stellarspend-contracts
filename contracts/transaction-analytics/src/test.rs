@@ -11,6 +11,7 @@ use soroban_sdk::{
     testutils::{Address as _, Events},
     Address, Env, Symbol, Vec, Map,
 };
+use crate::types::{FeeConfig, FeeModel};
 
 /// Creates a test environment with the contract deployed and initialized.
 fn setup_test_env() -> (Env, Address, TransactionAnalyticsContractClient<'static>) {
@@ -766,6 +767,50 @@ fn test_audit_log_events_emitted() {
     let events = env.events().all();
     // At least one audit log event should be emitted
     assert!(events.len() >= 1);
+}
+
+#[test]
+fn test_fee_cap_enforced() {
+    let (env, admin, client) = setup_test_env();
+
+    // Configure a fee cap of 5 stroops (very low)
+    let new_config = FeeConfig {
+        fee_model: FeeModel::Percentage(10), // 0.1% = 10 basis points
+        min_fee: None,
+        max_fee: Some(5),
+        enabled: true,
+        description: None,
+    };
+
+    client.update_fee_config(&admin, &new_config);
+
+    let mut transactions: Vec<Transaction> = Vec::new(&env);
+    transactions.push_back(create_transaction(&env, 1, 10000, "transfer"));
+
+    let metrics = client.process_batch(&admin, &transactions, &None);
+
+    // Without cap the fee would be 10, but cap should limit it to 5
+    assert_eq!(metrics.total_fees, 5);
+}
+
+#[test]
+fn test_update_fee_cap_emits_event() {
+    let (env, admin, client) = setup_test_env();
+
+    let before = env.events().all().len();
+
+    let new_config = FeeConfig {
+        fee_model: FeeModel::Percentage(10),
+        min_fee: None,
+        max_fee: Some(7),
+        enabled: true,
+        description: None,
+    };
+
+    client.update_fee_config(&admin, &new_config);
+
+    let after = env.events().all().len();
+    assert!(after > before);
 }
 
 #[test]

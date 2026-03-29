@@ -1,3 +1,16 @@
+    /// Pauses fee collection (admin only)
+    pub fn pause_fees(env: Env, admin: Address) {
+        admin.require_auth();
+        Self::require_admin(&env, &admin);
+        crate::fees::set_fee_paused(&env, &admin, true).expect("Failed to pause fees");
+    }
+
+    /// Resumes fee collection (admin only)
+    pub fn resume_fees(env: Env, admin: Address) {
+        admin.require_auth();
+        Self::require_admin(&env, &admin);
+        crate::fees::set_fee_paused(&env, &admin, false).expect("Failed to resume fees");
+    }
 //! # Transaction Analytics Contract
 //!
 //! A Soroban smart contract for generating batch analytics for multiple transactions.
@@ -51,6 +64,7 @@ pub use crate::validation::{
 pub use crate::fees::{
     calculate_transaction_fee, calculate_batch_fees, validate_fee_config, store_fee_config,
     get_current_fee_config, deduct_fees, update_fee_config,
+    get_operation_fee_config, store_operation_fee_config, update_operation_fee_config,
 };
 pub use crate::types::{
     FeeModel, FeeTier, FeeConfig, FeeCalculationResult, FeeDeductionEvent,
@@ -906,8 +920,37 @@ impl TransactionAnalyticsContract {
             }
         }
         
+        // Capture previous max_fee for event emission
+        let previous_max = get_current_fee_config(&env).and_then(|c| c.max_fee);
+
         // Store the new configuration
         store_fee_config(&env, &new_config).expect("Failed to store fee configuration");
+
+        // Emit event if max_fee (cap) changed
+        if previous_max != new_config.max_fee {
+            crate::types::AnalyticsEvents::fee_cap_changed(&env, &admin, previous_max, new_config.max_fee);
+        }
+    }
+
+    /// Updates per-operation fee configuration.
+    pub fn update_operation_fee_config(env: Env, admin: Address, operation: Symbol, new_config: FeeConfig) {
+        admin.require_auth();
+        Self::require_admin(&env, &admin);
+
+        // Validate and store via fees module
+        if let Err(validation_error) = crate::fees::validate_fee_config(&new_config) {
+            match validation_error {
+                ValidationError::InvalidPercentage => panic_with_error!(&env, AnalyticsError::InvalidBatch),
+                ValidationError::InvalidAmount => panic_with_error!(&env, AnalyticsError::InvalidAmount),
+                _ => panic_with_error!(&env, AnalyticsError::InvalidBatch),
+            }
+        }
+
+        let previous = crate::fees::get_operation_fee_config(&env, &operation);
+        crate::fees::store_operation_fee_config(&env, &operation, &new_config).expect("Failed to store operation fee config");
+
+        // Emit operation fee updated event
+        crate::types::AnalyticsEvents::operation_fee_updated(&env, &admin, &operation, previous, new_config);
     }
 
     /// Gets the current fee configuration.

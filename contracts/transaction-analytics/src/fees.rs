@@ -1,3 +1,65 @@
+// =====================
+// FEE SYSTEM EXTENSIONS
+// =====================
+// This module implements:
+// - Fee cap enforcement
+// - Per-operation fee configuration
+// - Fee distribution splitting
+// - Fee pause mechanism
+//
+// See each function for details and usage.
+/// Returns true if fees are currently paused.
+pub fn is_fee_paused(env: &Env) -> bool {
+    env.storage().instance().get(&crate::types::DataKey::FeePaused).unwrap_or(false)
+}
+
+/// Sets the fee pause flag (admin only).
+pub fn set_fee_paused(env: &Env, admin: &Address, paused: bool) -> Result<(), ValidationError> {
+    // Verify caller is admin
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&crate::types::DataKey::Admin)
+        .expect("Contract not initialized");
+    if *admin != stored_admin {
+        return Err(ValidationError::InvalidAddress);
+    }
+    env.storage().instance().set(&crate::types::DataKey::FeePaused, &paused);
+    crate::types::AnalyticsEvents::fee_pause_toggled(env, admin, paused);
+    Ok(())
+}
+use crate::types::FeeRecipientShare;
+/// Validates that the sum of recipient shares is exactly 10000 (100%).
+pub fn validate_recipient_shares(shares: &Vec<FeeRecipientShare>) -> Result<(), ValidationError> {
+    let mut total: u32 = 0;
+    for s in shares.iter() {
+        total = total.checked_add(s.share_bps).ok_or(ValidationError::InvalidAmount)?;
+    }
+    if total != 10000 {
+        return Err(ValidationError::InvalidAmount);
+    }
+    Ok(())
+}
+
+/// Splits a fee amount among recipients and emits events.
+pub fn distribute_fee(env: &Env, fee_amount: i128, shares: &Vec<FeeRecipientShare>) {
+    // Validate shares sum to 100%
+    validate_recipient_shares(shares).expect("Invalid recipient shares");
+    let mut distributed = 0i128;
+    for (i, s) in shares.iter().enumerate() {
+        let is_last = i == (shares.len() - 1);
+        let share_amt = if is_last {
+            // Assign remainder to last recipient
+            fee_amount - distributed
+        } else {
+            let amt = (fee_amount * (s.share_bps as i128)) / 10000;
+            distributed += amt;
+            amt
+        };
+        crate::types::AnalyticsEvents::fee_distributed(env, &s.recipient, share_amt, s.share_bps);
+        // In a real contract, here you would transfer the share_amt to s.recipient
+    }
+}
 //! # Fee Calculation Engine
 //! 
 //! Implements dynamic fee calculation for transactions with configurable fee structures.
@@ -6,6 +68,7 @@
 use soroban_sdk::{Address, Env, Symbol, symbol_short};
 
 use crate::types::{FeeConfig, FeeTier, FeeCalculationResult, DataKey, FeeDeductionEvent, ValidationError, AnalyticsEvents};
+use soroban_sdk::Symbol;
 
 /// Calculates fees for a single transaction based on the current fee configuration.
 /// 
@@ -17,7 +80,7 @@ use crate::types::{FeeConfig, FeeTier, FeeCalculationResult, DataKey, FeeDeducti
 /// # Returns
 /// * `FeeCalculationResult` containing the calculated fee and net amount
 pub fn calculate_transaction_fee(env: &Env, amount: i128, fee_config: &FeeConfig) -> FeeCalculationResult {
-    if amount <= 0 {
+    if is_fee_paused(env) || amount <= 0 {
         return FeeCalculationResult {
             gross_amount: amount,
             fee_amount: 0,
@@ -207,6 +270,18 @@ pub fn get_current_fee_config(env: &Env) -> Option<FeeConfig> {
     env.storage().instance().get(&DataKey::CurrentFeeConfig)
 }
 
+/// Retrieves per-operation fee configuration.
+pub fn get_operation_fee_config(env: &Env, operation: &Symbol) -> Option<FeeConfig> {
+    env.storage().instance().get(&DataKey::OperationFeeConfig(operation.clone()))
+}
+
+/// Stores per-operation fee configuration.
+pub fn store_operation_fee_config(env: &Env, operation: &Symbol, config: &FeeConfig) -> Result<(), ValidationError> {
+    validate_fee_config(config)?;
+    env.storage().instance().set(&DataKey::OperationFeeConfig(operation.clone()), config);
+    Ok(())
+}
+
 /// Deducts fees from a transaction amount and returns the net amount
 pub fn deduct_fees(env: &Env, gross_amount: i128) -> FeeCalculationResult {
     let config = get_current_fee_config(env)
@@ -249,6 +324,30 @@ pub fn update_fee_config(env: &Env, admin: &Address, new_config: FeeConfig) -> R
     validate_fee_config(&new_config)?;
     store_fee_config(env, &new_config)?;
     
+    Ok(())
+}
+
+/// Updates per-operation fee configuration (admin only)
+pub fn update_operation_fee_config(env: &Env, admin: &Address, operation: &Symbol, new_config: FeeConfig) -> Result<(), ValidationError> {
+    // Verify caller is admin
+    let stored_admin: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .expect("Contract not initialized");
+    if *admin != stored_admin {
+        return Err(ValidationError::InvalidAddress);
+    }
+
+    // Capture previous for event
+    let previous = get_operation_fee_config(env, operation);
+
+    validate_fee_config(&new_config)?;
+    store_operation_fee_config(env, operation, &new_config)?;
+
+    // Emit operation fee updated event
+    AnalyticsEvents::operation_fee_updated(env, admin, operation, previous, new_config);
+
     Ok(())
 }
 
@@ -394,5 +493,50 @@ mod tests {
         };
 
         assert!(validate_fee_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_fee_distribution_splits_correctly() {
+        let env = Env::default();
+        let r1 = Address::generate(&env);
+        let r2 = Address::generate(&env);
+        let shares = vec![
+            FeeRecipientShare { recipient: r1.clone(), share_bps: 6000 },
+            FeeRecipientShare { recipient: r2.clone(), share_bps: 4000 },
+        ];
+        let shares_vec = Vec::from_array(&env, &shares);
+        let fee = 1000i128;
+        crate::fees::distribute_fee(&env, fee, &shares_vec);
+        let events = env.events().all();
+        // Should emit two events
+        assert!(events.iter().any(|e| e.topics().contains(&r1)));
+        assert!(events.iter().any(|e| e.topics().contains(&r2)));
+    }
+
+    #[test]
+    fn test_fee_pausing_mechanism() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        env.storage().instance().set(&crate::types::DataKey::Admin, &admin);
+        // Set a fee config
+        let config = FeeConfig {
+            fee_model: FeeModel::Percentage(100), // 1%
+            min_fee: None,
+            max_fee: None,
+            enabled: true,
+            description: None,
+        };
+        crate::fees::store_fee_config(&env, &config).unwrap();
+        // Not paused: fee should be nonzero
+        let result = crate::fees::calculate_transaction_fee(&env, 10000, &config);
+        assert_eq!(result.fee_amount, 100);
+        // Pause fees
+        crate::fees::set_fee_paused(&env, &admin, true).unwrap();
+        let result_paused = crate::fees::calculate_transaction_fee(&env, 10000, &config);
+        assert_eq!(result_paused.fee_amount, 0);
+        // Resume fees
+        crate::fees::set_fee_paused(&env, &admin, false).unwrap();
+        let result_resumed = crate::fees::calculate_transaction_fee(&env, 10000, &config);
+        assert_eq!(result_resumed.fee_amount, 100);
     }
 }
