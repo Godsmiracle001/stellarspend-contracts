@@ -1,0 +1,6 @@
+use soroban_sdk::{Address,Env};
+use crate::errors::SharedError;
+/// Requires administrator authentication.
+pub fn require_admin(_env:&Env, caller:&Address, admin:&Address)->Result<(),SharedError>{ caller.require_auth(); if caller==admin {Ok(())} else {Err(SharedError::Unauthorized)} }
+/// Requires owner authentication.
+pub fn require_owner(_env:&Env, caller:&Address, owner:&Address)->Result<(),SharedError>{ caller.require_auth(); if caller==owner {Ok(())} else {Err(SharedError::Unauthorized)} }
