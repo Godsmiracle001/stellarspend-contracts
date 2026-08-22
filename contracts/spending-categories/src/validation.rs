@@ -1,16 +1,7 @@
-use soroban_sdk::contracterror;
+use crate::Error;
 
-/// Errors raised by validation.
-#[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Error {
-    /// Amount must be non-negative.
-    InvalidAmount = 1,
-    /// Contract has not been initialized.
-    NotInitialized = 2,
-}
-
-/// Validates a financial amount.
+/// Validates a spend amount recorded against a category: must be strictly
+/// positive. Reuses `shared::validation::validate_positive_amount`.
 pub fn validate_amount(amount: i128) -> Result<(), Error> {
-    if amount < 0 { Err(Error::InvalidAmount) } else { Ok(()) }
+    shared::validation::validate_positive_amount(amount).map_err(|_| Error::InvalidAmount)
 }

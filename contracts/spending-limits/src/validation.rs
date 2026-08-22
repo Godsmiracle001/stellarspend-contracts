@@ -1,16 +1,20 @@
-use soroban_sdk::contracterror;
+use soroban_sdk::Symbol;
 
-/// Errors raised by validation.
-#[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Error {
-    /// Amount must be non-negative.
-    InvalidAmount = 1,
-    /// Contract has not been initialized.
-    NotInitialized = 2,
+use crate::Error;
+
+/// Validates a spending-limit or spend amount: must be strictly positive.
+/// Reuses `shared::validation::validate_positive_amount`, mapped onto this
+/// contract's own typed error.
+pub fn validate_amount(amount: i128) -> Result<(), Error> {
+    shared::validation::validate_positive_amount(amount).map_err(|_| Error::InvalidAmount)
 }
 
-/// Validates a financial amount.
-pub fn validate_amount(amount: i128) -> Result<(), Error> {
-    if amount < 0 { Err(Error::InvalidAmount) } else { Ok(()) }
+/// Validates that `asset` is one StellarSpend currently supports, reusing
+/// the shared allowlist rather than each contract inventing its own.
+pub fn validate_asset(asset: &Symbol) -> Result<(), Error> {
+    if shared::assets::is_supported_asset(asset.clone()) {
+        Ok(())
+    } else {
+        Err(Error::UnsupportedAsset)
+    }
 }
