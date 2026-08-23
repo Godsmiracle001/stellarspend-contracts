@@ -1,16 +1,16 @@
-use soroban_sdk::contracterror;
+use soroban_sdk::Vec;
 
-/// Errors raised by validation.
-#[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Error {
-    /// Amount must be non-negative.
-    InvalidAmount = 1,
-    /// Contract has not been initialized.
-    NotInitialized = 2,
-}
+use crate::types::PolicyRule;
+use crate::Error;
 
-/// Validates a financial amount.
-pub fn validate_amount(amount: i128) -> Result<(), Error> {
-    if amount < 0 { Err(Error::InvalidAmount) } else { Ok(()) }
+/// Validates every rule in a policy set. `limit` and `zk_required_above` may
+/// be zero (a legitimate "block this category entirely" / "always require a
+/// proof" policy) but never negative.
+pub fn validate_rules(rules: &Vec<PolicyRule>) -> Result<(), Error> {
+    for rule in rules.iter() {
+        if rule.limit < 0 || rule.zk_required_above < 0 {
+            return Err(Error::InvalidAmount);
+        }
+    }
+    Ok(())
 }

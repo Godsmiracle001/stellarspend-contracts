@@ -1,5 +1,5 @@
-use soroban_sdk::{Address, Env};
 use crate::types::Config;
+use soroban_sdk::{Address, Env};
 
 const CONFIG: &str = "CONFIG";
 
@@ -16,4 +16,6 @@ pub fn write_config(env: &Env, config: &Config) {
 }
 
 /// Returns the configured owner.
-pub fn owner(env: &Env) -> Option<Address> { read_config(env).map(|c| c.admin) }
+pub fn owner(env: &Env) -> Option<Address> {
+    read_config(env).map(|c| c.admin)
+}

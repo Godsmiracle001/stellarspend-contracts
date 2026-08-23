@@ -1,16 +1,227 @@
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::testutils::{Address as _, Ledger};
-    use soroban_sdk::Env;
+    use crate::{Contract, ContractClient, Error};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Address, Env, Symbol,
+    };
+
+    const XLM: &str = "XLM";
+    const DAY: u64 = 86_400;
+    const WEEK: u64 = 604_800;
+
+    fn setup<'a>() -> (Env, ContractClient<'a>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(Contract, ());
+        let client = ContractClient::new(&env, &contract_id);
+        client.initialize(&admin);
+        (env, client, admin)
+    }
+
+    fn asset(env: &Env) -> Symbol {
+        Symbol::new(env, XLM)
+    }
+
+    fn daily(env: &Env) -> Symbol {
+        Symbol::new(env, "daily")
+    }
+
+    fn weekly(env: &Env) -> Symbol {
+        Symbol::new(env, "weekly")
+    }
+
+    // ── Happy path (the issue's own scenario) ───────────────────────────
 
     #[test]
-    fn happy_path_environment() { let env=Env::default(); env.ledger().set_sequence_number(1); assert_eq!(env.ledger().sequence(),1); }
+    fn weekly_limit_tracks_spend_and_rejects_overspend() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+
+        client.set_limit(&user, &xlm, &100, &weekly(&env));
+        assert_eq!(client.get_remaining(&user, &xlm), 100);
+
+        client.record_spend(&user, &xlm, &60);
+        assert_eq!(client.get_remaining(&user, &xlm), 40);
+
+        // A further 50 would total 110 > 100 -> must reject, in full.
+        let result = client.try_record_spend(&user, &xlm, &50);
+        assert_eq!(result, Err(Ok(Error::LimitExceeded)));
+        // Rejected spend must not have been partially applied.
+        assert_eq!(client.get_remaining(&user, &xlm), 40);
+    }
+
     #[test]
-    fn unauthorized_boundary_placeholder() { let env=Env::default(); env.mock_all_auths(); assert!(env.ledger().timestamp() >= 0); }
+    fn check_limit_reflects_current_remaining_allowance() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+
+        client.set_limit(&user, &xlm, &100, &weekly(&env));
+        client.record_spend(&user, &xlm, &60);
+
+        assert!(client.check_limit(&user, &xlm, &40));
+        assert!(!client.check_limit(&user, &xlm, &41));
+    }
+
+    // ── Unauthorized caller ─────────────────────────────────────────────
+
     #[test]
-    fn address_generation() { let env=Env::default(); let _=soroban_sdk::Address::generate(&env); }
+    fn set_limit_requires_the_user_to_authorize() {
+        let env = Env::default();
+        // Deliberately do NOT mock_all_auths — no address has authorized anything.
+        let contract_id = env.register(Contract, ());
+        let client = ContractClient::new(&env, &contract_id);
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+
+        let result = client.try_set_limit(&user, &xlm, &100, &weekly(&env));
+        assert!(result.is_err());
+    }
+
     #[test]
-    fn zero_boundary() { assert_eq!(0_i128.checked_add(0),Some(0)); }
+    fn record_spend_requires_the_user_to_authorize() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+        client.set_limit(&user, &xlm, &100, &weekly(&env));
+
+        // Fresh env with no mocked auths for the record_spend call.
+        let env2 = Env::default();
+        let client2 = ContractClient::new(&env2, &client.address);
+        let result = client2.try_record_spend(&user, &xlm, &10);
+        assert!(result.is_err());
+    }
+
+    // ── Boundary values ──────────────────────────────────────────────────
+
     #[test]
-    fn overflow_boundary() { assert_eq!(i128::MAX.checked_add(1),None); }
+    fn spend_exactly_equal_to_remaining_succeeds() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+        client.set_limit(&user, &xlm, &100, &weekly(&env));
+
+        client.record_spend(&user, &xlm, &100);
+        assert_eq!(client.get_remaining(&user, &xlm), 0);
+        assert!(!client.check_limit(&user, &xlm, &1));
+    }
+
+    #[test]
+    fn set_limit_rejects_non_positive_amount() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+
+        assert_eq!(
+            client.try_set_limit(&user, &xlm, &0, &weekly(&env)),
+            Err(Ok(Error::InvalidAmount))
+        );
+        assert_eq!(
+            client.try_set_limit(&user, &xlm, &-1, &weekly(&env)),
+            Err(Ok(Error::InvalidAmount))
+        );
+    }
+
+    #[test]
+    fn set_limit_rejects_unknown_period() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+
+        let bogus = Symbol::new(&env, "fortnightly");
+        assert_eq!(
+            client.try_set_limit(&user, &xlm, &100, &bogus),
+            Err(Ok(Error::InvalidPeriod))
+        );
+    }
+
+    #[test]
+    fn set_limit_rejects_unsupported_asset() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let not_an_asset = Symbol::new(&env, "DOGE");
+
+        assert_eq!(
+            client.try_set_limit(&user, &not_an_asset, &100, &weekly(&env)),
+            Err(Ok(Error::UnsupportedAsset))
+        );
+    }
+
+    #[test]
+    fn record_spend_without_a_limit_is_rejected() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+
+        assert_eq!(
+            client.try_record_spend(&user, &xlm, &10),
+            Err(Ok(Error::LimitNotFound))
+        );
+    }
+
+    #[test]
+    fn get_remaining_without_a_limit_is_zero_not_unlimited() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+        assert_eq!(client.get_remaining(&user, &xlm), 0);
+    }
+
+    // ── Period reset behavior ────────────────────────────────────────────
+
+    #[test]
+    fn spend_resets_when_a_new_period_begins() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+
+        client.set_limit(&user, &xlm, &100, &daily(&env));
+        client.record_spend(&user, &xlm, &90);
+        assert_eq!(client.get_remaining(&user, &xlm), 10);
+
+        // A further 50 would exceed the daily cap in the current period.
+        assert_eq!(
+            client.try_record_spend(&user, &xlm, &50),
+            Err(Ok(Error::LimitExceeded))
+        );
+
+        // Advance well past the daily boundary into a new period bucket.
+        env.ledger().with_mut(|l| l.timestamp += DAY + 1);
+
+        // The new period's accumulator starts empty — the same spend that
+        // was rejected a moment ago now succeeds.
+        assert_eq!(client.get_remaining(&user, &xlm), 100);
+        client.record_spend(&user, &xlm, &50);
+        assert_eq!(client.get_remaining(&user, &xlm), 50);
+    }
+
+    #[test]
+    fn weekly_period_does_not_reset_within_the_week() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let xlm = asset(&env);
+
+        client.set_limit(&user, &xlm, &100, &weekly(&env));
+        client.record_spend(&user, &xlm, &60);
+
+        // Advance one day — still well inside the same weekly bucket.
+        env.ledger().with_mut(|l| l.timestamp += DAY);
+        assert_eq!(client.get_remaining(&user, &xlm), 40);
+
+        // Advance past the full week — new bucket.
+        env.ledger().with_mut(|l| l.timestamp += WEEK);
+        assert_eq!(client.get_remaining(&user, &xlm), 100);
+    }
+
+    // ── Admin / initialize ───────────────────────────────────────────────
+
+    #[test]
+    fn initialize_twice_is_rejected() {
+        let (_, client, admin) = setup();
+        let result = client.try_initialize(&admin);
+        assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
+    }
 }
