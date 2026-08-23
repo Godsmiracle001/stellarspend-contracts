@@ -2,7 +2,6 @@ mod support;
 
 use support::setup;
 
-
 #[test]
 #[should_panic]
 fn initialize_rejects_invalid_fee_bps() {
