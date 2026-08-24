@@ -376,7 +376,7 @@ mod test {
         let mut corrupted = Bytes::new(&env);
         for i in 0..valid_len {
             if let Some(b) = valid_proof.get(i) {
-                if i >= 5 && i < 37 {
+                if (5..37).contains(&i) {
                     corrupted.push_back(0x00);
                 } else {
                     corrupted.push_back(b);

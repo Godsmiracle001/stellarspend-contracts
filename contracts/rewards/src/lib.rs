@@ -5,9 +5,10 @@ extern crate alloc;
 use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, Vec};
 
 mod storage;
+#[cfg(test)]
+mod test;
 pub mod types;
 pub mod validation;
-#[cfg(test)] mod test;
 
 /// Typed errors for the rewards contract.
 #[contracterror]
@@ -28,7 +29,9 @@ pub struct Contract;
 impl Contract {
     /// Initializes the contract with an administrator.
     pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
-        if storage::read_config(&env).is_some() { return Err(Error::AlreadyInitialized); }
+        if storage::read_config(&env).is_some() {
+            return Err(Error::AlreadyInitialized);
+        }
         admin.require_auth();
         storage::write_config(&env, &types::Config { admin, value: 0 });
         Ok(())
@@ -37,19 +40,26 @@ impl Contract {
     /// Updates the contract value after authenticating the administrator.
     pub fn set_value(env: Env, admin: Address, value: i128) -> Result<(), Error> {
         admin.require_auth();
-        if value < 0 { return Err(Error::InvalidAmount); }
-        let current=storage::read_config(&env).ok_or(Error::Unauthorized)?;
-        if current.admin != admin { return Err(Error::Unauthorized); }
+        if value < 0 {
+            return Err(Error::InvalidAmount);
+        }
+        let current = storage::read_config(&env).ok_or(Error::Unauthorized)?;
+        if current.admin != admin {
+            return Err(Error::Unauthorized);
+        }
         storage::write_config(&env, &types::Config { admin, value });
         Ok(())
     }
 
-       /// Returns the current configured value.
-    pub fn get_value(env: Env) -> i128 { storage::read_config(&env).map(|c| c.value).unwrap_or(0) }
+    pub fn get_value(env: Env) -> i128 {
+        storage::read_config(&env).map(|c| c.value).unwrap_or(0)
+    }
 
     /// Returns the configured administrator, if the contract has been
     /// initialized.
-    pub fn get_owner(env: Env) -> Option<Address> { storage::owner(&env) }
+    pub fn get_owner(env: Env) -> Option<Address> {
+        storage::owner(&env)
+    }
 
     /// Calculates the applicable reward tier rate for `value` using the
     /// shared tiered-rate utility (`shared::rate_curve::calculate_tiered_rate`),
