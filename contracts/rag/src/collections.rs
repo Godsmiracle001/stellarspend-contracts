@@ -233,3 +233,62 @@ impl CollectionLifecycleManager {
             .ok_or("CollectionNotFound")
     }
 }
+
+use soroban_sdk::{contracttype, Address, Env, String, Vec};
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct KnowledgeCollection {
+    pub collection_id: String,
+    pub owner: Address,
+    pub name: String,
+    pub description: String,
+    pub current_version: u32,
+    pub document_ids: Vec<String>,
+    pub is_active: bool,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub enum DataKey {
+    Collection(String),
+}
+
+pub struct CollectionUpdateManager;
+
+impl CollectionUpdateManager {
+    /// Updates mutable collection properties (name and description), ensuring immutability of identifiers.
+    pub fn update_collection(
+        env: &Env,
+        collection_id: String,
+        new_name: String,
+        new_description: String,
+        caller: Address,
+    ) -> Result<(), &'static str> {
+        caller.require_auth();
+
+        let mut collection: KnowledgeCollection = env.storage()
+            .persistent()
+            .get(&DataKey::Collection(collection_id.clone()))
+            .ok_or("CollectionNotFound")?;
+
+        if collection.owner != caller {
+            return Err("Unauthorized: only the collection owner can update collection metadata");
+        }
+
+        // Apply mutable property updates
+        collection.name = new_name;
+        collection.description = new_description;
+
+        // Persist updated state
+        env.storage().persistent().set(&DataKey::Collection(collection_id.clone()), &collection);
+
+        // Emit update event
+        env.events().publish(
+            (symbol_short!("col_update"), collection_id),
+            caller,
+        );
+
+        Ok(())
+    }
+}
