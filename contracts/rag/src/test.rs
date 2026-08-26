@@ -187,3 +187,37 @@ mod test {
         assert_eq!(v2.previous_version_id, Some(1));
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{Env, String};
+
+    #[test]
+    fn test_access_control_enforcement() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let authorized_user = Address::generate(&env);
+        let unauthorized_user = Address::generate(&env);
+
+        let doc_id = String::from_str(&env, "doc-secured-1");
+
+        let mut allowed = Vec::new(&env);
+        allowed.push_back(authorized_user.clone());
+
+        // Owner sets access policy
+        let set_res = AccessControlManager::set_policy(&env, doc_id.clone(), allowed, owner.clone());
+        assert!(set_res.is_ok());
+
+        // Owner can access
+        assert!(AccessControlManager::verify_access(&env, &doc_id, &owner).is_ok());
+
+        // Authorized user can access
+        assert!(AccessControlManager::verify_access(&env, &doc_id, &authorized_user).is_ok());
+
+        // Unauthorized user fails
+        let access_res = AccessControlManager::verify_access(&env, &doc_id, &unauthorized_user);
+        assert!(access_res.is_err());
+    }
+}
