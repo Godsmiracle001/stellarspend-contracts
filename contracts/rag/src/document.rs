@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env, String, Vec};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -15,6 +15,8 @@ pub struct VersionedDocument {
     pub owner: Address,
     pub active_version_id: u32,
     pub versions: Vec<DocumentVersion>,
+    pub revoked: bool,
+    pub revoked_ledger: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -57,6 +59,8 @@ impl DocumentCommitmentManager {
             owner,
             active_version_id: 1,
             versions,
+            revoked: false,
+            revoked_ledger: None,
         };
 
         env.storage().persistent().set(&DataKey::VersionedDoc(id), &document);
@@ -85,6 +89,10 @@ impl DocumentCommitmentManager {
             return Err("Unauthorized: only the document owner can commit a new version");
         }
 
+        if document.revoked {
+            return Err("DocumentRevoked: cannot commit new versions to a revoked document");
+        }
+
         let next_version_id = document.versions.len() + 1;
         let new_version = DocumentVersion {
             version_id: next_version_id,
@@ -99,7 +107,71 @@ impl DocumentCommitmentManager {
         Ok(next_version_id)
     }
 
-    /// Retrieves the content hash for a specific version to perform integrity verification.
+    /// Revokes a document, permanently disqualifying it from active RAG use.
+    /// Historical version data is untouched and remains queryable via
+    /// `get_hash_for_version`. Only the document's owner may revoke it.
+    pub fn revoke_document(
+        env: &Env,
+        id: String,
+        caller: Address,
+    ) -> Result<(), &'static str> {
+        caller.require_auth();
+
+        let mut document: VersionedDocument = env.storage()
+            .persistent()
+            .get(&DataKey::VersionedDoc(id.clone()))
+            .ok_or("DocumentNotFound")?;
+
+        if document.owner != caller {
+            return Err("Unauthorized: only the document owner can revoke the document");
+        }
+
+        if document.revoked {
+            return Err("AlreadyRevoked");
+        }
+
+        document.revoked = true;
+        document.revoked_ledger = Some(env.ledger().sequence());
+
+        env.storage().persistent().set(&DataKey::VersionedDoc(id.clone()), &document);
+
+        // Emit revocation event: topics = (symbol, doc_id), data = owner
+        env.events().publish(
+            (symbol_short!("revoke"), id),
+            document.owner.clone(),
+        );
+
+        Ok(())
+    }
+
+    /// Returns the content hash of the currently active version, but ONLY
+    /// if the document has not been revoked. Use this for new retrieval
+    /// requests — revoked documents must never be surfaced here.
+    pub fn get_active_hash_for_retrieval(
+        env: &Env,
+        id: String,
+    ) -> Result<String, &'static str> {
+        let document: VersionedDocument = env.storage()
+            .persistent()
+            .get(&DataKey::VersionedDoc(id))
+            .ok_or("DocumentNotFound")?;
+
+        if document.revoked {
+            return Err("DocumentRevoked: document is not available for retrieval");
+        }
+
+        for v in document.versions.iter() {
+            if v.version_id == document.active_version_id {
+                return Ok(v.content_hash);
+            }
+        }
+
+        Err("VersionNotFound")
+    }
+
+    /// Retrieves the content hash for a specific version to perform integrity
+    /// verification / historical provenance lookups. Intentionally does NOT
+    /// check revocation status — revoked documents must remain auditable.
     pub fn get_hash_for_version(
         env: &Env,
         id: String,
@@ -117,5 +189,15 @@ impl DocumentCommitmentManager {
         }
 
         Err("VersionNotFound")
+    }
+
+    /// Convenience read-only check for revocation status.
+    pub fn is_revoked(env: &Env, id: String) -> Result<bool, &'static str> {
+        let document: VersionedDocument = env.storage()
+            .persistent()
+            .get(&DataKey::VersionedDoc(id))
+            .ok_or("DocumentNotFound")?;
+
+        Ok(document.revoked)
     }
 }
