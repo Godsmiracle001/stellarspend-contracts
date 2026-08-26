@@ -84,3 +84,48 @@ mod test {
         assert_eq!(retrieval_record.collection_version, 2);
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{Env, String};
+
+    #[test]
+    fn test_collection_deactivation_lifecycle() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+
+        let col_id = String::from_str(&env, "col-lifecycle-1");
+        let doc_id = String::from_str(&env, "doc-1");
+
+        // 1. Create collection
+        CollectionLifecycleManager::create_collection(&env, col_id.clone(), owner.clone()).unwrap();
+
+        // 2. Deactivate collection
+        CollectionLifecycleManager::deactivate_collection(&env, col_id.clone(), owner.clone()).unwrap();
+        let col_state = CollectionLifecycleManager::get_collection(&env, col_id.clone()).unwrap();
+        assert_eq!(col_state.is_active, false);
+
+        // 3. Attempting to add document to inactive collection should fail
+        let add_res = CollectionLifecycleManager::add_document_to_collection(
+            &env,
+            col_id.clone(),
+            doc_id.clone(),
+            owner.clone(),
+        );
+        assert!(add_res.is_err());
+
+        // 4. Reactivate collection
+        CollectionLifecycleManager::reactivate_collection(&env, col_id.clone(), owner.clone()).unwrap();
+
+        // 5. Adding document now succeeds
+        let add_res_success = CollectionLifecycleManager::add_document_to_collection(
+            &env,
+            col_id,
+            doc_id,
+            owner,
+        );
+        assert!(add_res_success.is_ok());
+    }
+}
