@@ -51,6 +51,7 @@ impl Contract {
         Ok(())
     }
 
+    /// Returns the current configured value.
     pub fn get_value(env: Env) -> i128 {
         storage::read_config(&env).map(|c| c.value).unwrap_or(0)
     }

@@ -45,9 +45,18 @@ mod test {
 
     fn sample_tiers() -> Vec<Tier> {
         vec![
-            Tier { threshold: 0, rate_bps: 100 },      // 1.00% from 0
-            Tier { threshold: 1_000, rate_bps: 50 },   // 0.50% from 1000
-            Tier { threshold: 10_000, rate_bps: 25 },  // 0.25% from 10000
+            Tier {
+                threshold: 0,
+                rate_bps: 100,
+            }, // 1.00% from 0
+            Tier {
+                threshold: 1_000,
+                rate_bps: 50,
+            }, // 0.50% from 1000
+            Tier {
+                threshold: 10_000,
+                rate_bps: 25,
+            }, // 0.25% from 10000
         ]
     }
 
