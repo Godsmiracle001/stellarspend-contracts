@@ -145,3 +145,45 @@ mod test {
         assert_eq!(retrieved.metadata.title, String::from_str(&env, "Final Spec"));
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{Env, String};
+
+    #[test]
+    fn test_document_versioning_flow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+
+        let doc_id = String::from_str(&env, "doc-v1");
+        let hash_v1 = String::from_str(&env, "hash-v1");
+        let hash_v2 = String::from_str(&env, "hash-v2");
+
+        // Create document (Version 1)
+        VersionedDocumentManager::create_document(&env, doc_id.clone(), hash_v1.clone(), owner.clone()).unwrap();
+
+        let doc = VersionedDocumentManager::get_active_document(&env, doc_id.clone()).unwrap();
+        assert_eq!(doc.active_version_id, 1);
+        assert_eq!(doc.versions.len(), 1);
+
+        // Append Version 2
+        let new_ver = VersionedDocumentManager::append_version(&env, doc_id.clone(), hash_v2.clone(), owner.clone()).unwrap();
+        assert_eq!(new_ver, 2);
+
+        let updated_doc = VersionedDocumentManager::get_active_document(&env, doc_id.clone()).unwrap();
+        assert_eq!(updated_doc.active_version_id, 2);
+        assert_eq!(updated_doc.versions.len(), 2);
+
+        // Verify historical version 1 is traceable
+        let v1 = VersionedDocumentManager::get_version(&env, doc_id.clone(), 1).unwrap();
+        assert_eq!(v1.content_hash, hash_v1);
+        assert_eq!(v1.previous_version_id, None);
+
+        // Verify historical version 2 references version 1
+        let v2 = VersionedDocumentManager::get_version(&env, doc_id, 2).unwrap();
+        assert_eq!(v2.content_hash, hash_v2);
+        assert_eq!(v2.previous_version_id, Some(1));
+    }
+}
