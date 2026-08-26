@@ -292,3 +292,50 @@ impl CollectionUpdateManager {
         Ok(())
     }
 }
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{Env, String};
+
+    #[test]
+    fn test_authorized_collection_update() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let unauthorized = Address::generate(&env);
+
+        let col_id = String::from_str(&env, "col-update-1");
+        
+        let initial_collection = KnowledgeCollection {
+            col_id: col_id.clone(),
+            owner: owner.clone(),
+            name: String::from_str(&env, "Old Name"),
+            description: String::from_str(&env, "Old Description"),
+            current_version: 1,
+            document_ids: Vec::new(&env),
+            is_active: true,
+        };
+
+        env.storage().persistent().set(&DataKey::Collection(col_id.clone()), &initial_collection);
+
+        // Authorized update succeeds
+        let res = CollectionUpdateManager::update_collection(
+            &env,
+            col_id.clone(),
+            String::from_str(&env, "New Name"),
+            String::from_str(&env, "New Description"),
+            owner,
+        );
+        assert!(res.is_ok());
+
+        // Unauthorized update fails
+        let unauth_res = CollectionUpdateManager::update_collection(
+            &env,
+            col_id,
+            String::from_str(&env, "Hacked Name"),
+            String::from_str(&env, "Hacked Desc"),
+            unauthorized,
+        );
+        assert!(unauth_res.is_err());
+    }
+}
