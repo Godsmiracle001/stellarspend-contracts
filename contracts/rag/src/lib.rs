@@ -1,10 +1,18 @@
 #![no_std]
+use soroban_sdk::{contract, contractimpl, Env};
 
-mod contract;
-mod events;
-mod storage;
+mod collections;
+mod access;
+mod documents;
 
-#[cfg(test)]
-mod test;
+pub use collections::*;
+pub use access::*;
+pub use documents::*;
 
-pub use contract::{RagContract, RagError};
+#[contract]
+pub struct RagContract;
+
+#[contractimpl]
+impl RagContract {
+    pub fn init(_env: Env) {}
+}
